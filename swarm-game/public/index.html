@@ -3,8 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orbital Swarm</title>
+    <title>Orbital Swarm 3D</title>
     <link rel="stylesheet" href="style.css">
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
     <div id="ready-screen">
@@ -26,9 +35,10 @@
             <button class="pct-btn" data-pct="1">100%</button>
         </div>
     </div>
-    <canvas id="gameCanvas"></canvas>
+
+    <div id="labels-container"></div>
     
     <script src="/socket.io/socket.io.js"></script>
-    <script src="client.js"></script>
+    <script type="module" src="client.js"></script>
 </body>
 </html>

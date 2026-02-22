@@ -2,13 +2,18 @@ body, html {
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background-color: #0b0c10;
+    background-color: #050505;
     color: white;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-#gameCanvas {
+/* Three.js canvas */
+canvas {
     display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
 }
 
 /* --- Ready Screen --- */
@@ -89,6 +94,7 @@ body, html {
     pointer-events: none;
     text-transform: uppercase;
     letter-spacing: 2px;
+    z-index: 10;
 }
 
 #titanium-display {
@@ -153,4 +159,30 @@ body, html {
 
 .pct-btn:hover:not(.active) {
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Floating Labels (3D → 2D projection overlay) --- */
+#labels-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none; /* Let clicks pass through to the 3D canvas */
+    z-index: 5;
+}
+
+.floating-label {
+    position: absolute;
+    transform: translate(-50%, -50%); /* Center the text on the coordinate */
+    font-size: 14px;
+    font-weight: bold;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.8), -1px -1px 3px rgba(0,0,0,0.8);
+    text-align: center;
+    transition: color 0.2s;
+}
+
+.fleet-label {
+    font-size: 12px;
+    font-family: 'Courier New', Courier, monospace;
 }
