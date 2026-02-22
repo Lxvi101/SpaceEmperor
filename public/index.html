@@ -17,10 +17,13 @@
 </head>
 <body>
     <div id="ready-screen">
-        <h1>Orbital Swarm</h1>
-        <p>Waiting for players to ready up...</p>
-        <div id="players-list"></div>
-        <button id="ready-btn">READY</button>
+        <div class="lobby-panel">
+            <h1>Orbital Swarm</h1>
+            <h2 id="winner-text"></h2>
+            <p>Gathering commanders...</p>
+            <div id="players-list"></div>
+            <button id="ready-btn">READY</button>
+        </div>
     </div>
 
     <div id="ui-layer">
@@ -29,10 +32,10 @@
 
         <div id="fleet-controls">
             <span>Send: </span>
-            <button class="pct-btn" data-pct="0.25">25%</button>
-            <button class="pct-btn active" data-pct="0.5">50%</button>
-            <button class="pct-btn" data-pct="0.75">75%</button>
-            <button class="pct-btn" data-pct="1">100%</button>
+            <button class="pct-btn" data-pct="0.25">[1] 25%</button>
+            <button class="pct-btn active" data-pct="0.5">[2] 50%</button>
+            <button class="pct-btn" data-pct="0.7">[3] 70%</button>
+            <button class="pct-btn" data-pct="1">[4] 100%</button>
         </div>
     </div>
 

@@ -1,0 +1,3 @@
+# ignore all files in the .pnpm-store directory
+.pnpm-store/
+node_modules/

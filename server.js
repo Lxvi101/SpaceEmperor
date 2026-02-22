@@ -11,9 +11,9 @@ app.use(express.static('public'));
 // Game Constants & State
 const MAX_PLAYERS = 4;
 const BOT_ID = 'BOT';
-const BOT_PLANET_ID = 4; // Center planet for bot
+const BOT_PLANET_ID = 4;
 const PLAYER_COLORS = ['#00d2ff', '#ff0055', '#00ff66', '#ffcc00'];
-const BOT_COLOR = '#ff6600'; // Orange for bot
+const BOT_COLOR = '#ff6600';
 let players = {};
 let fleets = [];
 let fleetIdCounter = 0;
@@ -45,29 +45,20 @@ function getHumanPlayerCount() {
 
 function spawnBot() {
     if (botSpawned || getHumanPlayerCount() !== 1) return;
-
     const p = planets[BOT_PLANET_ID];
-    if (p.owner) return; // Planet already taken
+    if (p.owner) return;
 
-    players[BOT_ID] = {
-        id: BOT_ID,
-        color: BOT_COLOR,
-        titanium: 100,
-        isReady: true,
-        isBot: true
-    };
+    players[BOT_ID] = { id: BOT_ID, color: BOT_COLOR, titanium: 100, isReady: true, isBot: true };
     p.owner = BOT_ID;
     p.ships[BOT_ID] = 10;
     p.isHome = BOT_ID;
     botSpawned = true;
     io.emit('playerJoined', players[BOT_ID]);
     io.emit('playersUpdate', players);
-    console.log('Bot spawned on planet', BOT_PLANET_ID);
 }
 
 function removeBot() {
     if (!players[BOT_ID]) return;
-
     delete players[BOT_ID];
     const p = planets[BOT_PLANET_ID];
     if (p.owner === BOT_ID) {
@@ -78,15 +69,54 @@ function removeBot() {
     botSpawned = false;
     io.emit('playerLeft', BOT_ID);
     io.emit('playersUpdate', players);
-    console.log('Bot removed');
 }
 
 function checkGameStart() {
     const playerIds = Object.keys(players);
     if (playerIds.length > 0 && playerIds.every(id => players[id].isReady)) {
         gameStarted = true;
+        tickCount = 0; // reset tick on start
         io.emit('gameStarted');
     }
+}
+
+function resetGame(winnerId) {
+    gameStarted = false;
+    io.emit('gameOver', winnerId);
+
+    fleets = [];
+    fleetIdCounter = 0;
+    
+    // Reset Planets
+    planets.forEach(p => {
+        p.owner = null;
+        p.ships = {};
+        delete p.isHome;
+    });
+
+    // Reset Players & re-assign homes
+    let pIndex = 0;
+    Object.keys(players).forEach(id => {
+        players[id].isReady = false;
+        players[id].titanium = 100;
+        
+        if (players[id].isBot) {
+            planets[BOT_PLANET_ID].owner = id;
+            planets[BOT_PLANET_ID].ships[id] = 10;
+            planets[BOT_PLANET_ID].isHome = id;
+        } else {
+            if (pIndex === BOT_PLANET_ID) pIndex++; // skip bot home
+            if (planets[pIndex]) {
+                planets[pIndex].owner = id;
+                planets[pIndex].ships[id] = 10;
+                planets[pIndex].isHome = id;
+            }
+            pIndex++;
+        }
+    });
+
+    io.emit('stateUpdate', { planets, fleets, players });
+    io.emit('playersUpdate', players);
 }
 
 function botSendFleet(fromPlanetId, toPlanetId) {
@@ -98,42 +128,32 @@ function botSendFleet(fromPlanetId, toPlanetId) {
     fromPlanet.ships[BOT_ID] -= sentShips;
 
     fleets.push({
-        id: fleetIdCounter++,
-        owner: BOT_ID,
-        from: fromPlanetId,
-        to: toPlanetId,
-        count: sentShips,
-        progress: 0
+        id: fleetIdCounter++, owner: BOT_ID, from: fromPlanetId,
+        to: toPlanetId, count: sentShips, progress: 0
     });
 }
 
 function botBuyShips(targetPlanetId) {
     const player = players[BOT_ID];
     const planet = planets[targetPlanetId];
-    const COST = 50;
-    const SHIPS_REWARD = 20;
+    const isUnderAttack = planet ? Object.keys(planet.ships).filter(id => planet.ships[id] >= 1).length > 1 : false;
 
-    if (player && planet && planet.owner === BOT_ID && player.titanium >= COST) {
-        player.titanium -= COST;
-        planet.ships[BOT_ID] = (planet.ships[BOT_ID] || 0) + SHIPS_REWARD;
+    if (player && planet && planet.owner === BOT_ID && player.titanium >= 50 && !isUnderAttack) {
+        player.titanium -= 50;
+        planet.ships[BOT_ID] = (planet.ships[BOT_ID] || 0) + 20;
     }
 }
 
 function runBotAI() {
     if (!players[BOT_ID] || !gameStarted) return;
-
     const bot = players[BOT_ID];
     const botPlanets = planets.filter(p => p.owner === BOT_ID);
 
-    // 1. Buy reinforcements if we have 50+ titanium
     if (bot.titanium >= 50 && botPlanets.length > 0) {
-        const bestPlanet = botPlanets.reduce((a, b) =>
-            (a.ships[BOT_ID] || 0) > (b.ships[BOT_ID] || 0) ? a : b
-        );
+        const bestPlanet = botPlanets.reduce((a, b) => (a.ships[BOT_ID] || 0) > (b.ships[BOT_ID] || 0) ? a : b);
         botBuyShips(bestPlanet.id);
     }
 
-    // 2. Attack: find a planet with enough ships and a good target
     for (const p of botPlanets) {
         const ships = Math.floor(p.ships[BOT_ID] || 0);
         if (ships < 8) continue;
@@ -151,7 +171,7 @@ function runBotAI() {
 
         if (ships > enemyShips + 2) {
             botSendFleet(p.id, target.id);
-            break; // One action per tick
+            break; 
         }
     }
 }
@@ -164,17 +184,18 @@ io.on('connection', (socket) => {
     }
 
     const humanCount = Object.values(players).filter(p => !p.isBot).length;
-    const playerIndex = humanCount;
-    players[socket.id] = {
-        id: socket.id,
-        color: PLAYER_COLORS[playerIndex],
-        titanium: 100,
-        isReady: false
-    };
+    let playerIndex = 0;
+    while(planets[playerIndex] && planets[playerIndex].owner !== null && playerIndex !== BOT_PLANET_ID) {
+        playerIndex++;
+    }
 
-    planets[playerIndex].owner = socket.id;
-    planets[playerIndex].ships[socket.id] = 10;
-    planets[playerIndex].isHome = socket.id;
+    players[socket.id] = { id: socket.id, color: PLAYER_COLORS[humanCount % 4], titanium: 100, isReady: false };
+    
+    if (planets[playerIndex]) {
+        planets[playerIndex].owner = socket.id;
+        planets[playerIndex].ships[socket.id] = 10;
+        planets[playerIndex].isHome = socket.id;
+    }
 
     spawnBot();
 
@@ -190,9 +211,21 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('kickPlayer', (targetId) => {
+        if (gameStarted) return;
+        if (targetId === BOT_ID) {
+            removeBot();
+        } else {
+            const targetSocket = io.sockets.sockets.get(targetId);
+            if (targetSocket) {
+                targetSocket.emit('errorMsg', 'You were kicked.');
+                targetSocket.disconnect();
+            }
+        }
+    });
+
     socket.on('sendFleet', (data) => {
         if (!gameStarted) return;
-
         const { fromPlanetId, toPlanetId, percentage } = data;
         const fromPlanet = planets[fromPlanetId];
 
@@ -200,38 +233,40 @@ io.on('connection', (socket) => {
         if (shipCount > 0) {
             const pct = percentage !== undefined ? percentage : 0.5;
             const sentShips = Math.floor(shipCount * pct) || (shipCount >= 1 ? 1 : 0);
-
             if (sentShips <= 0) return;
 
             fromPlanet.ships[socket.id] -= sentShips;
-
             fleets.push({
-                id: fleetIdCounter++,
-                owner: socket.id,
-                from: fromPlanetId,
-                to: toPlanetId,
-                count: sentShips,
-                progress: 0
+                id: fleetIdCounter++, owner: socket.id, from: fromPlanetId,
+                to: toPlanetId, count: sentShips, progress: 0
             });
         }
     });
 
     socket.on('buyShips', (targetPlanetId) => {
         if (!gameStarted) return;
-
         const player = players[socket.id];
         const planet = planets[targetPlanetId];
-        const COST = 50;
-        const SHIPS_REWARD = 20;
+        const isUnderAttack = planet ? Object.keys(planet.ships).filter(id => planet.ships[id] >= 1).length > 1 : false;
 
-        if (player && planet && planet.owner === socket.id && player.titanium >= COST) {
-            player.titanium -= COST;
-            planet.ships[socket.id] = (planet.ships[socket.id] || 0) + SHIPS_REWARD;
+        if (player && planet && planet.owner === socket.id && player.titanium >= 50 && !isUnderAttack) {
+            player.titanium -= 50;
+            planet.ships[socket.id] = (planet.ships[socket.id] || 0) + 20;
         }
     });
 
     socket.on('disconnect', () => {
         delete players[socket.id];
+        
+        // Remove ownership if game hasn't started
+        if (!gameStarted) {
+            planets.forEach(p => {
+                if(p.owner === socket.id) {
+                    p.owner = null; p.ships = {}; delete p.isHome;
+                }
+            });
+        }
+
         io.emit('playerLeft', socket.id);
         io.emit('playersUpdate', players);
 
@@ -241,43 +276,32 @@ io.on('connection', (socket) => {
             fleets = [];
             fleetIdCounter = 0;
             planets.forEach(p => {
-                p.owner = null;
-                p.ships = {};
-                delete p.isHome;
+                p.owner = null; p.ships = {}; delete p.isHome;
             });
         }
 
-        if (!gameStarted) {
-            checkGameStart();
-        }
+        if (!gameStarted) checkGameStart();
     });
 });
 
-// Server Game Loop
 let tickCount = 0;
 setInterval(() => {
     if (!gameStarted) return;
-
     tickCount++;
 
-    // 1. Generate ships and Titanium (halved speed)
     planets.forEach(p => {
         if (p.owner && players[p.owner]) {
-            p.ships[p.owner] = (p.ships[p.owner] || 0) + 0.05;
-            players[p.owner].titanium += 0.1;
+            const isHomeworld = p.isHome === p.owner;
+            p.ships[p.owner] = (p.ships[p.owner] || 0) + (isHomeworld ? 0.15 : 0.05);
+            players[p.owner].titanium += 0.1 * (p.radius / 30);
         }
     });
 
-    // 2. Bot AI (every ~2 seconds)
-    if (tickCount % 20 === 0) {
-        runBotAI();
-    }
+    if (tickCount % 20 === 0) runBotAI();
 
-    // 3. Move fleets (halved speed)
     for (let i = fleets.length - 1; i >= 0; i--) {
         let f = fleets[i];
         f.progress += 0.01;
-
         if (f.progress >= 1) {
             const targetPlanet = planets[f.to];
             targetPlanet.ships[f.owner] = (targetPlanet.ships[f.owner] || 0) + f.count;
@@ -285,10 +309,9 @@ setInterval(() => {
         }
     }
 
-    // 4. Combat & Conquest
+    // Combat & Conquest
     planets.forEach(p => {
         const playersPresent = Object.keys(p.ships).filter(playerId => p.ships[playerId] >= 1);
-
         if (playersPresent.length > 1) {
             playersPresent.forEach(playerId => {
                 p.ships[playerId] -= 0.25;
@@ -296,22 +319,32 @@ setInterval(() => {
             });
         } else if (playersPresent.length === 1) {
             const dominantPlayer = playersPresent[0];
-            if (p.owner !== dominantPlayer) {
-                p.owner = dominantPlayer;
-            }
+            if (p.owner !== dominantPlayer) p.owner = dominantPlayer;
         }
 
         Object.keys(p.ships).forEach(playerId => {
-            if (p.ships[playerId] < 1 && playersPresent.length > 1) {
-                p.ships[playerId] = 0;
-            }
+            if (p.ships[playerId] < 1 && playersPresent.length > 1) p.ships[playerId] = 0;
         });
     });
+
+    // Check Win Condition
+    if (tickCount > 30) { 
+        const activeFactions = new Set();
+        planets.forEach(p => {
+            if (p.owner) activeFactions.add(p.owner);
+            Object.keys(p.ships).forEach(owner => { if (p.ships[owner] >= 1) activeFactions.add(owner); });
+        });
+        fleets.forEach(f => activeFactions.add(f.owner));
+
+        if (activeFactions.size === 1) {
+            resetGame(Array.from(activeFactions)[0]);
+            return;
+        }
+    }
 
     io.emit('stateUpdate', { planets, fleets, players });
 }, 100);
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Swarm Server running on http://localhost:${PORT}`);
+server.listen(process.env.PORT || 3000, () => {
+    console.log(`Swarm Server running on http://localhost:${process.env.PORT || 3000}`);
 });

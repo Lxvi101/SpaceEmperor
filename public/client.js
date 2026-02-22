@@ -6,40 +6,43 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 const socket = io();
 
-// --- Three.js Setup ---
+// --- Three.js Setup (Minimalist 2D Projection) ---
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x050505, 0.001);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-camera.position.set(0, 800, 400); 
+// Top-Down Camera
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 10, 5000);
+camera.position.set(0, 1600, 0);
+camera.lookAt(0, 0, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false }); // Disable antialias for post-processing performance
+const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.toneMapping = THREE.ReinhardToneMapping;
 document.body.appendChild(renderer.domElement);
 
-// --- Post-Processing (Bloom) ---
+// --- Post-Processing (Subtle Bloom) ---
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.1;
-bloomPass.strength = 1.2; // The intensity of the neon glow
-bloomPass.radius = 0.5;
+bloomPass.threshold = 0.2;
+bloomPass.strength = 0.5;
+bloomPass.radius = 0.2;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
 composer.addPass(bloomPass);
 
+// --- Controls (Panning Only) ---
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableRotate = false;
+controls.enablePan = true;
+controls.enableZoom = true;
 controls.enableDamping = true;
-controls.maxPolarAngle = Math.PI / 2.2;
-
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-scene.add(ambientLight);
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(100, 500, 200);
-scene.add(dirLight);
+controls.dampingFactor = 0.05;
+controls.mouseButtons = {
+    LEFT: THREE.MOUSE.PAN,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN
+};
 
 // --- Game Assets & Caches ---
 const planetMeshes = {};
@@ -48,18 +51,15 @@ const planetLabels = {};
 const activeFleetObjects = {}; 
 const particles = [];
 
-// Geometries
-const shipGeometry = new THREE.ConeGeometry(0.4, 1, 4);
-shipGeometry.rotateX(Math.PI / 2); 
-const particleGeo = new THREE.OctahedronGeometry(1.5, 0);
+// Geometries (Minimalist styling)
+const shipGeometry = new THREE.ConeGeometry(0.15, 0.5, 3);
+shipGeometry.rotateX(Math.PI / 2);
+const particleGeo = new THREE.OctahedronGeometry(1.0, 0);
 
 const materialsCache = {};
 function getPlayerMaterial(colorHex) {
     if (!materialsCache[colorHex]) {
-        materialsCache[colorHex] = new THREE.MeshStandardMaterial({ 
-            color: colorHex, roughness: 0.3, metalness: 0.8,
-            emissive: colorHex, emissiveIntensity: 0.5 // Boosted for bloom
-        });
+        materialsCache[colorHex] = new THREE.MeshBasicMaterial({ color: colorHex });
     }
     return materialsCache[colorHex];
 }
@@ -69,10 +69,16 @@ let myId = null;
 let players = {};
 let planets = [];
 let fleets = [];
-let selectedPlanet = null;
+let selectedPlanets = new Set();
 let isGameStarted = false;
 let sendPercentage = 0.5;
 let globalTime = 0;
+
+// Drag and drop state
+let isDragging = false;
+let dragLines = [];
+const dragMaterial = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 5, gapSize: 3, transparent: true, opacity: 0.5 });
+const mousePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 const offsetX = -600;
 const offsetZ = -400;
@@ -82,12 +88,27 @@ function map2Dto3D(x, y) {
 }
 
 // --- UI Logic ---
+function setActivePercentageUI(pct) {
+    sendPercentage = pct;
+    document.querySelectorAll('.pct-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.pct-btn[data-pct="${pct}"]`).classList.add('active');
+}
+
 document.querySelectorAll('.pct-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
-        document.querySelectorAll('.pct-btn').forEach(b => b.classList.remove('active'));
-        e.target.classList.add('active');
-        sendPercentage = parseFloat(e.target.dataset.pct);
+        setActivePercentageUI(parseFloat(e.target.dataset.pct));
     });
+});
+
+window.addEventListener('keydown', (e) => {
+    if (!isGameStarted) return;
+    if (e.key === ' ') {
+        e.preventDefault();
+        if (selectedPlanets.size === 1) socket.emit('buyShips', Array.from(selectedPlanets)[0]);
+        return;
+    }
+    const keyMap = { '1': 0.25, '2': 0.5, '3': 0.7, '4': 1.0 };
+    if (keyMap[e.key]) setActivePercentageUI(keyMap[e.key]);
 });
 
 const readyBtn = document.getElementById('ready-btn');
@@ -96,17 +117,33 @@ readyBtn.addEventListener('click', () => socket.emit('toggleReady'));
 function updateLobbyUI() {
     const list = document.getElementById('players-list');
     list.innerHTML = '';
+    
     Object.values(players).forEach((p, index) => {
-        const div = document.createElement('div');
-        div.className = 'player-status';
-        const label = p.isBot ? 'Bot' : `Player ${index + 1}`;
-        div.innerHTML = `
-            <span class="status-dot" style="background-color: ${p.color}; box-shadow: 0 0 10px ${p.color};"></span>
-            ${label} ${p.id === myId ? '(You)' : ''}
-            - ${p.isReady ? '<span style="color:#00ff66;">READY</span>' : '<span style="color:#ffcc00;">WAITING</span>'}
+        const label = p.isBot ? 'Bot Faction' : `Commander ${index + 1}`;
+        const row = document.createElement('div');
+        row.className = 'player-row';
+        row.style.borderLeftColor = p.color;
+
+        const isMe = p.id === myId;
+        
+        row.innerHTML = `
+            <div class="player-info">
+                <span class="status-dot" style="background-color: ${p.color}; box-shadow: 0 0 10px ${p.color};"></span>
+                <span>${label} ${isMe ? '(You)' : ''}</span>
+                <span style="color:${p.isReady ? '#00ff66' : '#8892b0'}; font-size: 0.85rem; margin-left: 10px;">
+                    ${p.isReady ? 'READY' : 'WAITING'}
+                </span>
+            </div>
+            ${!isMe ? `<button class="kick-btn" data-id="${p.id}">KICK</button>` : ''}
         `;
-        list.appendChild(div);
+        list.appendChild(row);
     });
+
+    // Bind kick buttons
+    document.querySelectorAll('.kick-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => socket.emit('kickPlayer', e.target.dataset.id));
+    });
+
     if (players[myId]?.isReady) {
         readyBtn.classList.add('is-ready');
         readyBtn.innerText = "WAITING FOR OTHERS...";
@@ -131,9 +168,33 @@ socket.on('init', (data) => {
 });
 
 socket.on('playersUpdate', (updatedPlayers) => { players = updatedPlayers; if (!isGameStarted) updateLobbyUI(); });
-socket.on('gameStarted', () => { isGameStarted = true; document.getElementById('ready-screen').style.display = 'none'; });
+socket.on('gameStarted', () => { 
+    isGameStarted = true; 
+    document.getElementById('ready-screen').style.display = 'none'; 
+    document.getElementById('winner-text').innerText = ''; 
+});
 socket.on('playerJoined', (player) => { players[player.id] = player; if (!isGameStarted) updateLobbyUI(); });
 socket.on('playerLeft', (id) => { delete players[id]; if (!isGameStarted) updateLobbyUI(); });
+socket.on('errorMsg', (msg) => alert(msg));
+
+// --- Game Over Logic ---
+socket.on('gameOver', (winnerId) => {
+    isGameStarted = false;
+    
+    const winnerName = players[winnerId]?.isBot ? 'The Bot' : (winnerId === myId ? 'You' : 'A Commander');
+    document.getElementById('winner-text').innerText = `${winnerName} Conquered the System!`;
+    document.getElementById('ready-screen').style.display = 'flex';
+
+    // Visual Cleanup
+    selectedPlanets.clear();
+    dragLines.forEach(l => scene.remove(l)); dragLines = [];
+    particles.forEach(p => scene.remove(p)); particles.length = 0;
+    Object.values(activeFleetObjects).forEach(f => {
+        scene.remove(f.mesh); scene.remove(f.line); 
+        if(f.label.parentNode) f.label.parentNode.removeChild(f.label);
+    });
+    for (let key in activeFleetObjects) delete activeFleetObjects[key];
+});
 
 socket.on('stateUpdate', (data) => {
     // Combat Detection for Particles
@@ -164,17 +225,35 @@ socket.on('stateUpdate', (data) => {
 // --- 3D Scene Management ---
 function init3DPlanets() {
     const geometry = new THREE.SphereGeometry(1, 32, 32);
-    
+
     planets.forEach(p => {
-        const material = new THREE.MeshStandardMaterial({ color: 0x454a59, roughness: 0.4 });
+        const material = new THREE.MeshBasicMaterial({ color: 0x1c1e24 });
         const sphere = new THREE.Mesh(geometry, material);
-        
+
         sphere.scale.set(p.radius, p.radius, p.radius);
         const pos = map2Dto3D(p.x, p.y);
         sphere.position.copy(pos);
-        
+
+        if (p.isHome) {
+            const ringGeo = new THREE.RingGeometry(p.radius + 6, p.radius + 8, 64);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = -Math.PI / 2;
+            sphere.add(ring);
+            sphere.userData.homeRing = ring;
+        }
+
+        // REDUCED & NON-ROTATING HUD Selection Ring
+        const hudGeo = new THREE.EdgesGeometry(new THREE.CylinderGeometry(p.radius + 1.5, p.radius + 1.5, 0.5, 32));
+        const hudMat = new THREE.LineDashedMaterial({ color: 0x00d2ff, dashSize: 2, gapSize: 2 });
+        const selRing = new THREE.LineSegments(hudGeo, hudMat);
+        selRing.computeLineDistances();
+        selRing.visible = false;
+        sphere.add(selRing);
+        sphere.userData.selRing = selRing;
+
         sphere.userData.shipGroup = new THREE.Group();
-        sphere.add(sphere.userData.shipGroup); 
+        sphere.add(sphere.userData.shipGroup);
         sphere.userData.shipPool = [];
 
         scene.add(sphere);
@@ -195,14 +274,24 @@ function update3DPlanets() {
         if (p.owner && players[p.owner]) {
             const color = new THREE.Color(players[p.owner].color);
             mesh.material.color.lerp(color, 0.1);
-            mesh.material.emissive.copy(color);
-            mesh.material.emissiveIntensity = 0.2;
+            if (mesh.userData.homeRing && p.isHome) {
+                mesh.userData.homeRing.material.color.lerp(color, 0.1);
+                mesh.userData.homeRing.material.opacity = 0.8;
+            }
         } else {
-            mesh.material.color.lerp(new THREE.Color(0x454a59), 0.1);
-            mesh.material.emissiveIntensity = 0;
+            mesh.material.color.lerp(new THREE.Color(0x1c1e24), 0.1);
+            if (mesh.userData.homeRing) mesh.userData.homeRing.material.opacity = 0.2;
         }
 
-        mesh.scale.setScalar(selectedPlanet === p.id ? p.radius * 1.1 : p.radius);
+        // Selection HUD Visibility
+        if (mesh.userData.selRing) {
+            mesh.userData.selRing.visible = selectedPlanets.has(p.id);
+            if (players[myId] && selectedPlanets.has(p.id)) {
+                mesh.userData.selRing.material.color.setHex(players[myId].color.replace('#', '0x'));
+            }
+        }
+
+        mesh.scale.setScalar(selectedPlanets.has(p.id) ? p.radius * 1.05 : p.radius);
 
         const shipGroup = mesh.userData.shipGroup;
         const pool = mesh.userData.shipPool;
@@ -258,12 +347,7 @@ function spawnParticles3D(planet, colorHex, amount) {
             pos.z + Math.sin(angle) * orbitRadius
         );
         
-        p.userData = {
-            vx: (Math.random() - 0.5) * 4,
-            vy: (Math.random() - 0.5) * 4,
-            vz: (Math.random() - 0.5) * 4,
-            life: 1.0
-        };
+        p.userData = { vx: (Math.random() - 0.5) * 4, vy: 0, vz: (Math.random() - 0.5) * 4, life: 1.0 };
         
         scene.add(p);
         particles.push(p);
@@ -274,9 +358,8 @@ function updateParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
         let p = particles[i];
         p.position.x += p.userData.vx;
-        p.position.y += p.userData.vy;
         p.position.z += p.userData.vz;
-        p.userData.life -= 0.02;
+        p.userData.life -= 0.03;
         
         // Shrink and fade out
         p.scale.setScalar(p.userData.life);
@@ -304,7 +387,9 @@ function processOrbitsAndLabels() {
         const labelDiv = planetLabels[p.id];
         if (!mesh || !labelDiv) return;
 
-        const orbitRadius = p.radius + 20; 
+        // NOTE: Rotation code removed per request
+
+        const orbitRadius = p.radius + 15;
         const pool = mesh.userData.shipPool;
 
         pool.forEach(ship => {
@@ -365,13 +450,10 @@ function processFleets() {
 
         if (!fleetObj) {
             const mesh = new THREE.Mesh(shipGeometry, getPlayerMaterial(color));
-            mesh.scale.set(0.8, 0.8, 0.8); 
+            mesh.scale.set(0.6, 0.6, 0.6);
             scene.add(mesh);
 
-            // Create Fleet Trail Line
-            const lineMat = new THREE.LineBasicMaterial({ 
-                color: color, transparent: true, opacity: 0.4 
-            });
+            const lineMat = new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.2 });
             const lineGeo = new THREE.BufferGeometry().setFromPoints([startPos, startPos]);
             const line = new THREE.Line(lineGeo, lineMat);
             scene.add(line);
@@ -381,16 +463,17 @@ function processFleets() {
             label.style.color = color;
             labelsContainer.appendChild(label);
 
-            fleetObj = { mesh, label, line };
+            fleetObj = { mesh, label, line, localProgress: f.progress };
             activeFleetObjects[f.id] = fleetObj;
         }
 
-        const currentPos = new THREE.Vector3().lerpVectors(startPos, endPos, f.progress);
-        
+        fleetObj.localProgress += 0.0016;
+        fleetObj.localProgress = THREE.MathUtils.lerp(fleetObj.localProgress, f.progress, 0.1);
+
+        const currentPos = new THREE.Vector3().lerpVectors(startPos, endPos, fleetObj.localProgress);
+
         fleetObj.mesh.position.copy(currentPos);
-        fleetObj.mesh.lookAt(endPos); 
-        
-        // Update line geometry to connect start position to current position
+        fleetObj.mesh.lookAt(endPos);
         fleetObj.line.geometry.setFromPoints([startPos, currentPos]);
 
         const screenPos = toScreenPosition(currentPos, camera);
@@ -405,7 +488,7 @@ function processFleets() {
     });
 }
 
-// --- Interactions (Raycasting) ---
+// --- Interactions (Raycasting & Drag/Drop) ---
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
@@ -416,29 +499,121 @@ window.addEventListener('mousedown', (e) => {
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(Object.values(planetMeshes));
+    const intersects = raycaster.intersectObjects(Object.values(planetMeshes), true);
 
     if (intersects.length > 0) {
-        const clickedMesh = intersects[0].object;
-        const clickedPlanetId = Number(Object.keys(planetMeshes).find(key => planetMeshes[key] === clickedMesh));
-        const clickedPlanet = planets.find(p => p.id === clickedPlanetId);
-
-        if (selectedPlanet === null) {
-            if (clickedPlanet.ships[myId] >= 1) selectedPlanet = clickedPlanetId;
-        } else {
-            if (selectedPlanet !== clickedPlanetId) {
-                socket.emit('sendFleet', { fromPlanetId: selectedPlanet, toPlanetId: clickedPlanetId, percentage: sendPercentage });
+        let obj = intersects[0].object;
+        let clickedPlanetId = null;
+        while (obj) {
+            const key = Object.keys(planetMeshes).find(k => planetMeshes[k] === obj);
+            if (key !== undefined) {
+                clickedPlanetId = Number(key);
+                break;
             }
-            selectedPlanet = null;
+            obj = obj.parent;
+        }
+
+        const clickedPlanet = clickedPlanetId !== null ? planets.find(p => p.id === clickedPlanetId) : null;
+
+        if (clickedPlanet && clickedPlanet.owner === myId) {
+            if (e.shiftKey) {
+                // Toggle selection
+                if (selectedPlanets.has(clickedPlanetId)) selectedPlanets.delete(clickedPlanetId);
+                else selectedPlanets.add(clickedPlanetId);
+            } else {
+                // If clicking an unselected planet without shift, select ONLY it
+                if (!selectedPlanets.has(clickedPlanetId)) {
+                    selectedPlanets.clear();
+                    selectedPlanets.add(clickedPlanetId);
+                }
+            }
+            // Always prepare to drag if we have ships
+            let hasShips = Array.from(selectedPlanets).some(id => planets.find(p => p.id === id).ships[myId] >= 1);
+            if (hasShips) {
+                isDragging = true;
+                controls.enablePan = false;
+            }
+        } else {
+            // Clicked enemy or empty planet - Clear selection
+            if (!isDragging) selectedPlanets.clear();
         }
     } else {
-        selectedPlanet = null;
+        selectedPlanets.clear();
     }
     updateUI();
 });
 
+window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersectPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(mousePlane, intersectPoint);
+
+    // Update lines from all selected planets
+    selectedPlanets.forEach(id => {
+        const p = planets.find(pl => pl.id === id);
+        if (!p) return;
+        const startPos = map2Dto3D(p.x, p.y);
+
+        let line = dragLines.find(l => l.userData.fromId === id);
+        if (!line) {
+            const geo = new THREE.BufferGeometry().setFromPoints([startPos, startPos]);
+            line = new THREE.Line(geo, dragMaterial);
+            line.userData.fromId = id;
+            if (players[myId]) line.material.color.setHex(players[myId].color.replace('#', '0x'));
+            scene.add(line);
+            dragLines.push(line);
+        }
+        line.geometry.setFromPoints([startPos, intersectPoint]);
+        line.computeLineDistances(); // Required for LineDashedMaterial
+    });
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (isDragging) {
+        isDragging = false;
+        controls.enablePan = true;
+
+        // Clean up visual drag lines
+        dragLines.forEach(l => scene.remove(l));
+        dragLines = [];
+
+        mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(Object.values(planetMeshes), true);
+
+        if (intersects.length > 0) {
+            let obj = intersects[0].object;
+            let targetId = null;
+            while (obj) {
+                const key = Object.keys(planetMeshes).find(k => planetMeshes[k] === obj);
+                if (key !== undefined) {
+                    targetId = Number(key);
+                    break;
+                }
+                obj = obj.parent;
+            }
+
+            if (targetId !== null) {
+                selectedPlanets.forEach(fromId => {
+                    if (fromId !== targetId) {
+                        socket.emit('sendFleet', { fromPlanetId: fromId, toPlanetId: targetId, percentage: sendPercentage });
+                    }
+                });
+            }
+        }
+    }
+});
+
 document.getElementById('buy-btn').addEventListener('click', () => {
-    if (selectedPlanet !== null) socket.emit('buyShips', selectedPlanet);
+    if (selectedPlanets.size === 1) {
+        socket.emit('buyShips', Array.from(selectedPlanets)[0]);
+    }
 });
 
 function updateUI() {
@@ -446,19 +621,39 @@ function updateUI() {
         const ti = Math.floor(players[myId].titanium);
         document.getElementById('titanium-display').innerText = `Titanium: ${ti}`;
         const buyBtn = document.getElementById('buy-btn');
-        const selectedP = planets.find(p => p.id === selectedPlanet);
 
-        if (selectedP && selectedP.owner === myId) {
-            buyBtn.style.display = 'block';
-            const myColor = players[myId].color;
-            buyBtn.style.borderColor = myColor;
-            if (ti >= 50) {
-                buyBtn.style.color = myColor;
-                buyBtn.disabled = false;
-                buyBtn.style.boxShadow = `0 0 10px ${myColor}`;
+        // Only allow buying if exactly 1 planet is selected
+        if (selectedPlanets.size === 1) {
+            const selectedP = planets.find(p => p.id === Array.from(selectedPlanets)[0]);
+
+            if (selectedP && selectedP.owner === myId) {
+                buyBtn.style.display = 'block';
+                const myColor = players[myId].color;
+
+                // Combat Check
+                const isUnderAttack = Object.keys(selectedP.ships).filter(id => selectedP.ships[id] >= 1).length > 1;
+
+                if (isUnderAttack) {
+                    buyBtn.innerText = "UNDER ATTACK!";
+                    buyBtn.disabled = true;
+                    buyBtn.style.boxShadow = 'none';
+                    buyBtn.style.color = '#ff3333';
+                    buyBtn.style.borderColor = '#ff3333';
+                } else if (ti >= 50) {
+                    buyBtn.innerText = "REINFORCE (50 Ti)";
+                    buyBtn.style.color = myColor;
+                    buyBtn.style.borderColor = myColor;
+                    buyBtn.disabled = false;
+                    buyBtn.style.boxShadow = `0 0 10px ${myColor}`;
+                } else {
+                    buyBtn.innerText = "REINFORCE (50 Ti)";
+                    buyBtn.disabled = true;
+                    buyBtn.style.boxShadow = 'none';
+                    buyBtn.style.color = '#555';
+                    buyBtn.style.borderColor = '#555';
+                }
             } else {
-                buyBtn.disabled = true;
-                buyBtn.style.boxShadow = 'none';
+                buyBtn.style.display = 'none';
             }
         } else {
             buyBtn.style.display = 'none';
