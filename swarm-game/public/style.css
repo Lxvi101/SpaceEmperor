@@ -1,0 +1,156 @@
+body, html {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #0b0c10;
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+#gameCanvas {
+    display: block;
+}
+
+/* --- Ready Screen --- */
+#ready-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(11, 12, 16, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+#ready-screen h1 {
+    font-size: 3rem;
+    margin-bottom: 10px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: #00d2ff;
+    text-shadow: 0 0 15px #00d2ff;
+}
+
+#players-list {
+    margin: 30px 0;
+    font-size: 1.2rem;
+    min-height: 150px;
+}
+
+.player-status {
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-dot {
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+#ready-btn {
+    background: transparent;
+    color: #fff;
+    border: 2px solid #fff;
+    padding: 15px 40px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    border-radius: 5px;
+    transition: all 0.3s;
+}
+
+#ready-btn.is-ready {
+    background: #00ff66;
+    color: #000;
+    border-color: #00ff66;
+    box-shadow: 0 0 20px #00ff66;
+}
+
+#ready-btn:hover:not(.is-ready) {
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+}
+
+/* --- Existing UI --- */
+#ui-layer {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    pointer-events: none;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+#titanium-display {
+    color: #c5c6c7;
+    text-shadow: 0 0 10px rgba(197, 198, 199, 0.5);
+}
+
+#buy-btn {
+    background: transparent;
+    color: #ffffff;
+    border: 2px solid #ffffff;
+    padding: 10px 20px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-radius: 5px;
+    transition: all 0.3s ease;
+    margin-top: 10px;
+    pointer-events: auto;
+}
+
+#buy-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.5);
+}
+
+#buy-btn:disabled {
+    border-color: #555 !important;
+    color: #555 !important;
+    cursor: not-allowed;
+    box-shadow: none;
+    background: transparent;
+}
+
+/* --- Fleet Controls --- */
+#fleet-controls {
+    margin-top: 15px;
+    pointer-events: auto;
+    font-size: 14px;
+}
+
+.pct-btn {
+    background: transparent;
+    color: #c5c6c7;
+    border: 1px solid #c5c6c7;
+    padding: 5px 10px;
+    margin-right: 5px;
+    cursor: pointer;
+    border-radius: 3px;
+    font-weight: bold;
+    transition: all 0.2s;
+}
+
+.pct-btn.active {
+    background: #00d2ff;
+    color: #000;
+    border-color: #00d2ff;
+    box-shadow: 0 0 10px #00d2ff;
+}
+
+.pct-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.1);
+}
